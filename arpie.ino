@@ -26,7 +26,20 @@
 #include <avr/interrupt.h>  
 #include <avr/io.h>
 #include <EEPROM.h>
-  
+
+//
+// FORWARD DECLS
+//
+void editRefresh();
+
+//
+// GENERAL OPTIONS
+//
+#define GEN_OPTS_MIDI_TRANSPOSE 0x01
+#define GEN_OPTS_MAX_VALUE 0x01
+#define GEN_OPTS_DEFAULT_VALUE 0
+byte genOptions;
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -416,7 +429,8 @@ enum {
   EEPROM_OUTPUT_CHAN,
   EEPROM_SYNCH_SOURCE,
   EEPROM_SYNCH_SEND,
-  EEPROM_MIDI_OPTS
+  EEPROM_MIDI_OPTS,
+  EEPROM_GEN_OPTS
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -979,9 +993,8 @@ unsigned long arpStopNoteTime;
 unsigned long arpLastPlayAdvance;
 
 // Force to scale stuff
-char arpForceToScaleBase;
 int arpForceToScaleMask;
-
+char arpChordBaseNote;
 
 byte arpRebuild;          // whether the sequence needs to be rebuilt
 
@@ -1006,9 +1019,9 @@ void arpInit()
   arpSequenceLength = 0;
   arpLastPlayAdvance = 0;
   arpTranspose = 0;
-  arpForceToScaleBase=0;
   arpForceToScaleMask=ARP_SCALE_CHROMATIC;
-  
+  arpChordBaseNote=0;
+
   // the pattern starts with all beats on
   for(int i=0;i<16;++i)
     arpPattern[i] = 1;
@@ -1024,19 +1037,25 @@ void arpClear()
 
 ////////////////////////////////////////////////////////////////////////////////
 // COPY CHORD
-void arpCopyChord(int *dest)
+char arpCopyChord(int *dest)
 {
+  char lowest = 0;
   int i;
   for(i=0; i<arpChordLength; ++i)
+  {
+    if(!lowest || ARP_GET_NOTE(arpChord[i]) < lowest)
+      lowest = ARP_GET_NOTE(arpChord[i]);
     dest[i] = arpChord[i];
+  }
+  return lowest;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // SORT NOTES OF CHORD
 // Crappy bubblesort.. but there are not too many notes
-void arpSortChord(int *dest)
+char arpSortChord(int *dest)
 {
-  arpCopyChord(dest);
+  char lowest = arpCopyChord(dest);
   byte sorted = 0;
   while(!sorted)
   {
@@ -1052,6 +1071,7 @@ void arpSortChord(int *dest)
        }
     }
   }
+  return lowest;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1095,9 +1115,9 @@ void arpBuildSequence()
   // sort the chord info if needed
   int chord[ARP_MAX_CHORD];
   if(arpType == ARP_TYPE_UP || arpType == ARP_TYPE_DOWN || arpType == ARP_TYPE_UP_DOWN)
-    arpSortChord(chord);
+    arpChordBaseNote = arpSortChord(chord);
   else
-    arpCopyChord(chord);
+    arpChordBaseNote = arpCopyChord(chord);
 
   int tempSequence[ARP_MAX_SEQUENCE];
   int tempSequenceLength = 0;        
@@ -1207,7 +1227,7 @@ void arpBuildSequence()
         note += transpose;
 
         // force to scale
-        int scaleNote = note - arpForceToScaleBase;
+        int scaleNote = note - arpChordBaseNote;
         while(scaleNote<0)
           scaleNote+=12;
         if(!(arpForceToScaleMask & ((int)0x0800>>(scaleNote % 12))))
@@ -1309,10 +1329,21 @@ void arpReadInput(unsigned long milliseconds)
   {
     // read the MIDI port
     byte msg = midiRead(milliseconds, 0);      
-    if(!msg || !!(uiHoldType & UI_HOLD_LOCKED))
+    if(!msg)
       break;
     byte note = midiParams[0];
     byte velocity = midiParams[1];
+    if(!!(uiHoldType & UI_HOLD_LOCKED))
+    {
+      if(!!(genOptions & GEN_OPTS_MIDI_TRANSPOSE) && MIDI_IS_NOTE_ON(msg) && velocity && note)
+      {
+        if(arpChordBaseNote)
+          arpTranspose = note - arpChordBaseNote;
+        arpRebuild=1;
+        editRefresh();
+      }
+      break;
+    }
 
     // NOTE ON MESSAGE
     if(MIDI_IS_NOTE_ON(msg) && velocity && note)
@@ -1547,6 +1578,7 @@ unsigned long editLongHoldTime;
 byte editPressType;
 
 unsigned long editTapTempoTime;
+byte editForceRefresh;
 
 ////////////////////////////////////////////////////////////////////////////////
 // INIT EDITING
@@ -1557,6 +1589,14 @@ void editInit()
   editRevertTime = 1;  // force a display refresh on startup
   editLongHoldTime = 0;
   editTapTempoTime = 0;
+  editForceRefresh = 1;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FORCE REFRESH OF DISPLAY
+void editRefresh()
+{
+  editForceRefresh = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2085,7 +2125,12 @@ void editTranspose(char keyPress, byte forceRefresh)
     uiClearLeds();
     uiSetLeds(0, 16, LED_DIM);
     uiLeds[3] = LED_MEDIUM;
-    uiLeds[arpTranspose + 3] = LED_BRIGHT;
+    if(arpTranspose < -3)
+      uiLeds[arpTranspose + 3] = LED_MEDIUM;
+    else if(arpTranspose > 12)
+      uiLeds[arpTranspose + 3] = LED_MEDIUM;
+    else
+      uiLeds[arpTranspose + 3] = LED_BRIGHT;
   }
 }
 
@@ -2104,9 +2149,16 @@ void editForceToScale(char keyPress, byte forceRefresh)
       case 4: arpForceToScaleMask = ARP_SCALE_LYDIAN; break;
       case 5: arpForceToScaleMask = ARP_SCALE_MIXOLYDIAN; break;
       case 6: arpForceToScaleMask = ARP_SCALE_AEOLIAN; break;
-      case 7: arpForceToScaleMask = ARP_SCALE_LOCRIAN; break;
+      case 7: arpForceToScaleMask = ARP_SCALE_LOCRIAN; break;            
     }
     arpRebuild = 1;
+    forceRefresh = 1;
+  }
+  else
+  if(15 == keyPress)
+  {    
+    genOptions ^= GEN_OPTS_MIDI_TRANSPOSE;
+    eepromSet(EEPROM_GEN_OPTS, genOptions);    
     forceRefresh = 1;
   }
   
@@ -2126,14 +2178,16 @@ void editForceToScale(char keyPress, byte forceRefresh)
       case ARP_SCALE_AEOLIAN:    uiLeds[6] = LED_BRIGHT; break;
       case ARP_SCALE_LOCRIAN:    uiLeds[7] = LED_BRIGHT; break;
     }    
-  }
+    uiLeds[15] = (genOptions & GEN_OPTS_MIDI_TRANSPOSE)? LED_BRIGHT:LED_DIM;    
+  }  
 }
 
 /////////////////////////////////////////////////////
 // EDIT RUN
 void editRun(unsigned long milliseconds)
 {
-  byte forceRefresh = 0;
+  byte forceRefresh = editForceRefresh;
+  editForceRefresh = 0;
 
   // Capture any key pressed on the data entry keypad
   char dataKeyPress = uiDataKey;
@@ -2307,6 +2361,8 @@ void heartbeatRun(unsigned long milliseconds)
 ////////////////////////////////////////////////////////////////////////////////
 void setup() {                
 
+  genOptions = eepromGet(EEPROM_GEN_OPTS, 0, GEN_OPTS_MAX_VALUE, GEN_OPTS_DEFAULT_VALUE);
+
   midiInit();
   arpInit();
   heartbeatInit();
@@ -2328,14 +2384,16 @@ void setup() {
     midiSendChannel = 0;
     midiReceiveChannel = MIDI_OMNI;
     midiOptions = MIDI_OPTS_DEFAULT_VALUE;
+    genOptions = GEN_OPTS_DEFAULT_VALUE;
     synchToMIDI = 0; 
     synchSendMIDI = 0; 
     
     eepromSet(EEPROM_OUTPUT_CHAN, midiSendChannel);
     eepromSet(EEPROM_INPUT_CHAN, midiReceiveChannel);
-    eepromSet(EEPROM_MIDI_OPTS, MIDI_OPTS_DEFAULT_VALUE);
+    eepromSet(EEPROM_MIDI_OPTS, midiOptions);
     eepromSet(EEPROM_SYNCH_SOURCE,synchToMIDI);
     eepromSet(EEPROM_SYNCH_SEND,synchSendMIDI);
+    eepromSet(EEPROM_GEN_OPTS,genOptions);
     
     uiSetLeds(0, 16, LED_BRIGHT);
     delay(500);
