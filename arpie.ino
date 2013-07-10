@@ -2090,6 +2090,46 @@ void editTranspose(char keyPress, byte forceRefresh)
 }
 
 /////////////////////////////////////////////////////
+// EDIT FORCE TO SCALE
+void editForceToScale(char keyPress, byte forceRefresh)
+{  
+  if(keyPress >= 0 && keyPress <= 7)
+  {
+    switch(keyPress)
+    {
+      case 0: arpForceToScaleMask = ARP_SCALE_CHROMATIC; break;
+      case 1: arpForceToScaleMask = ARP_SCALE_IONIAN; break;
+      case 2: arpForceToScaleMask = ARP_SCALE_DORIAN; break;
+      case 3: arpForceToScaleMask = ARP_SCALE_PHRYGIAN; break;
+      case 4: arpForceToScaleMask = ARP_SCALE_LYDIAN; break;
+      case 5: arpForceToScaleMask = ARP_SCALE_MIXOLYDIAN; break;
+      case 6: arpForceToScaleMask = ARP_SCALE_AEOLIAN; break;
+      case 7: arpForceToScaleMask = ARP_SCALE_LOCRIAN; break;
+    }
+    arpRebuild = 1;
+    forceRefresh = 1;
+  }
+  
+  if(forceRefresh)
+  {
+    uiClearLeds();
+    uiSetLeds(0, 8, LED_DIM);
+    uiLeds[0] = LED_MEDIUM;
+    switch(arpForceToScaleMask)
+    {
+      case ARP_SCALE_CHROMATIC:  uiLeds[0] = LED_BRIGHT; break;
+      case ARP_SCALE_IONIAN:     uiLeds[1] = LED_BRIGHT; break;
+      case ARP_SCALE_DORIAN:     uiLeds[2] = LED_BRIGHT; break;
+      case ARP_SCALE_PHRYGIAN:   uiLeds[3] = LED_BRIGHT; break;
+      case ARP_SCALE_LYDIAN:     uiLeds[4] = LED_BRIGHT; break;
+      case ARP_SCALE_MIXOLYDIAN: uiLeds[5] = LED_BRIGHT; break;
+      case ARP_SCALE_AEOLIAN:    uiLeds[6] = LED_BRIGHT; break;
+      case ARP_SCALE_LOCRIAN:    uiLeds[7] = LED_BRIGHT; break;
+    }    
+  }
+}
+
+/////////////////////////////////////////////////////
 // EDIT RUN
 void editRun(unsigned long milliseconds)
 {
@@ -2211,7 +2251,10 @@ void editRun(unsigned long milliseconds)
       editMidiOutputChannel(dataKeyPress, forceRefresh);
     break;    
   case EDIT_MODE_TRANSPOSE:
-    editTranspose(dataKeyPress, forceRefresh);
+    if(EDIT_LONG_HOLD == editPressType)
+      editForceToScale(dataKeyPress, forceRefresh);
+    else
+      editTranspose(dataKeyPress, forceRefresh);
     break;        
   case EDIT_MODE_PATTERN:
   default:
