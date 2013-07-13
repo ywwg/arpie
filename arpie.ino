@@ -1,14 +1,14 @@
 ////////////////////////////////////////////////////////////////////////////////
-//  
-//    ------------------------------------------
-//     AAAAA    RRRRRR    PPPPPP    II   EEEEEEE
-//    AA   AA   RR   RR   PP   PP   II   EE
-//    AAAAAAA   RRRRRR    PPPPPP    II   EEEE
-//    AA   AA   RR   RR   PP        II   EE
-//    AA   AA   RR   RR   PP        II   EEEEEEE
-//    ------------------------------------------
-//    MONOPHONIC MIDI ARPEGGIATOR
-//    hotchk155/2013
+//
+//                                  //
+//
+//      //////   //  //// //////    //    ////
+//            // ////     //    //  //  //    //
+//      //////// //       //    //  //  ////////
+//    //      // //       //    //  //  //
+//      //////   //       //////    //    ////
+//      MIDI ARPEGGIATOR  //
+//      hotchk155/2013    //
 //
 //    Revision History   
 //    1.00  16Apr13  Baseline 
