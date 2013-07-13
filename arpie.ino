@@ -924,7 +924,7 @@ void synchRun(unsigned long milliseconds)
 #define ARP_MAKE_NOTE(note, vel) ((((unsigned int)vel)<<8)|(note))
 #define ARP_GET_NOTE(x) ((x)&0x7f)
 #define ARP_GET_VELOCITY(x) (((x)>>8)&0x7f)
-#define ARP_MAX_SEQUENCE 60
+#define ARP_MAX_SEQUENCE 64
 #define ARP_NOTE_HELD 0x8000
 #define ALL_NOTES_IN_CHORD 0xff
 
@@ -946,7 +946,10 @@ enum
   ARP_INSERT_HI,
   ARP_INSERT_LOW,
   ARP_INSERT_3_1,
-  ARP_INSERT_4_2
+  ARP_INSERT_4_2,
+  ARP_INSERT_SLICENDICE1,
+  ARP_INSERT_SLICENDICE2,
+  ARP_INSERT_SLICENDICE4
 };
 
 //                                   0123456789012345
@@ -999,6 +1002,7 @@ unsigned long arpLastPlayAdvance;
 int arpForceToScaleMask;
 char arpChordBaseNote;
 
+byte arpRandSeed;
 byte arpRebuild;          // whether the sequence needs to be rebuilt
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1024,6 +1028,7 @@ void arpInit()
   arpTranspose = 0;
   arpForceToScaleMask=ARP_SCALE_CHROMATIC;
   arpChordBaseNote=0;
+  arpRandSeed=0;
 
   // the pattern starts with all beats on
   for(int i=0;i<16;++i)
@@ -1083,6 +1088,9 @@ void arpRandomizeChord(int *dest)
 {
   int i,j;
 
+  // ensure order is same with each rebuild
+  randomSeed(arpRandSeed);
+  
   // clear destination buffer
   for(i=0; i<arpChordLength; ++i)
     dest[i] = 0;
@@ -1103,6 +1111,32 @@ void arpRandomizeChord(int *dest)
         break;
       }
     }        
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SLICE AND DICE A SEQUENCE
+void arpSliceNDice(unsigned int *sequence, int *input, int srcLength, int destLength )
+{
+  randomSeed(arpRandSeed);
+  int putPos = 0;
+  int getPos = 0;
+  char count = 0;
+  while(putPos < destLength)
+  {
+    // have we run out of notes to transfer
+    if(!count)
+    {
+      // pick a new block of notes to 
+      // transfer over
+      getPos = random(srcLength);
+      count = 1+random(4);
+    }
+    else 
+    {
+      sequence[putPos++] = input[getPos];
+      --count;      
+    }    
   }
 }
 
@@ -1264,9 +1298,6 @@ void arpBuildSequence()
     }           
   }  
 
-
-
-
   // we have the expanded sequence for one octave... now we need to 
   // perform any necessary note insertions
   int i, j;
@@ -1322,7 +1353,20 @@ void arpBuildSequence()
         i++;
     }
     break;
+   case ARP_INSERT_SLICENDICE1:
+     arpSequenceLength = arpPatternLength;
+     arpSliceNDice(arpSequence, tempSequence, tempSequenceLength, arpSequenceLength);
+     break;
+   case ARP_INSERT_SLICENDICE2:
+     arpSequenceLength = arpPatternLength * 2;
+     arpSliceNDice(arpSequence, tempSequence, tempSequenceLength, arpSequenceLength);
+     break;
+   case ARP_INSERT_SLICENDICE4:
+     arpSequenceLength = arpPatternLength * 4;
+     arpSliceNDice(arpSequence, tempSequence, tempSequenceLength, arpSequenceLength);
+     break;
   }     
+  
 }  
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1696,6 +1740,7 @@ void editArpType(char keyPress, byte forceRefresh)
   case 3: 
   case 4:
   case 5:
+    arpRandSeed = random(256);
     arpType = keyPress;
     arpRebuild = 1;
     forceRefresh = 1;
@@ -1933,6 +1978,10 @@ void editInsertMode(char keyPress, byte forceRefresh)
   case 2: 
   case 3: 
   case 4:  
+  case 5:  
+  case 6:  
+  case 7:  
+    arpRandSeed = random(256);
     arpInsertMode = keyPress;
     arpRebuild = 1;
     forceRefresh = 1;
@@ -1983,18 +2032,14 @@ void editInsertMode(char keyPress, byte forceRefresh)
   case 14: // MIN
     arpChord[0] = ARP_MAKE_NOTE(48,127);       
     arpChord[1] = ARP_MAKE_NOTE(51,127);       
-    ;       
     arpChord[2] = ARP_MAKE_NOTE(55,127);       
-    ;       
     arpChordLength = 3;
     arpRebuild = 1;
     break;
   case 15: // MAJ
     arpChord[0] = ARP_MAKE_NOTE(48,127);       
     arpChord[1] = ARP_MAKE_NOTE(52,127);       
-    ;       
     arpChord[2] = ARP_MAKE_NOTE(55,127);       
-    ;       
     arpChordLength = 3;
     arpRebuild = 1;
     break;
@@ -2003,7 +2048,7 @@ void editInsertMode(char keyPress, byte forceRefresh)
   if(forceRefresh)
   {
     uiClearLeds();
-    uiSetLeds(0, 5, LED_DIM);
+    uiSetLeds(0, 8, LED_DIM);
     uiLeds[arpInsertMode] = LED_BRIGHT;
     uiSetLeds(10, 6, LED_MEDIUM);
   }
