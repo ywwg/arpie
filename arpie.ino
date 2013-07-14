@@ -79,6 +79,7 @@ byte genOptions;
 // Time in ms that counts as a long button press
 #define UI_LONG_HOLD_TIME 700
 
+#define LED_BLINK 254
 #define LED_BRIGHT 255
 #define LED_MEDIUM 25
 #define LED_DIM 1
@@ -101,7 +102,7 @@ volatile char uiLastMenuKey;
 volatile byte uiDebounce;
 volatile byte uiScanPosition;
 volatile byte uiLedOffPeriod;
-volatile byte uiFlashHold;
+volatile byte uiBlink;
 
 unsigned long uiUnflashInLED;
 unsigned long uiUnflashOutLED;
@@ -151,7 +152,7 @@ ISR(TIMER2_OVF_vect)
   else
   {         
     // used to flash hold light
-    ++uiFlashHold;  
+    ++uiBlink;  
 
     // need to start scanning from the start of the led row again?
     if(uiScanPosition >= 15)
@@ -173,6 +174,9 @@ ISR(TIMER2_OVF_vect)
 
     // does this LED need to be lit?    
     byte ledOnPeriod = uiLeds[buttonIndex];
+    if(LED_BLINK == ledOnPeriod)
+      ledOnPeriod = !!(uiBlink & 0x80)? LED_BRIGHT:LED_OFF;
+      
     if(ledOnPeriod)
     {
       // ok enable led strobe line
@@ -269,7 +273,7 @@ void uiInit()
   uiUnflashSynchLED = 0;
   uiHoldPressedTime = 0;
   uiHoldType = 0;
-  uiFlashHold = 0;
+  uiBlink = 0;
 
   // start the interrupt to service the UI   
   TCCR2A = 0;
@@ -387,7 +391,7 @@ void uiRun(unsigned long milliseconds)
         // record a long hold and set LOCK flag
         uiHoldType |= UI_HOLD_HELD;          
         uiHoldType |= UI_HOLD_LOCKED;          
-        uiFlashHold = 0;
+        uiBlink = 0;
       }
     }  
     else
@@ -408,7 +412,7 @@ void uiRun(unsigned long milliseconds)
       }    
 
   if(uiHoldType & UI_HOLD_LOCKED)
-    digitalWrite(P_UI_HOLD_LED, !!(uiFlashHold & 0x80));
+    digitalWrite(P_UI_HOLD_LED, !!(uiBlink & 0x80));
   else
     digitalWrite(P_UI_HOLD_LED, !!(uiHoldType & UI_HOLD_CHORD));   
 }
@@ -1002,8 +1006,31 @@ unsigned long arpLastPlayAdvance;
 int arpForceToScaleMask;
 char arpChordBaseNote;
 
+#define ARP_TRANS_LOOP_NOOP 127
+#define ARP_TRANS_LOOP_SZ 32
+char arpTransposeLoop[ARP_TRANS_LOOP_SZ];
+enum {
+   ARP_TRANS_LOOP_OFF = 0x00,
+   ARP_TRANS_LOOP_1   = 0x01,
+   ARP_TRANS_LOOP_2   = 0x02,
+   ARP_TRANS_LOOP_4   = 0x04,
+   ARP_TRANS_LOOP_REC = 0x10
+};
+enum {
+   ARP_TRANS_KEY_NONE,
+   ARP_TRANS_KEY_BUTTON,
+   ARP_TRANS_KEY_MIDI
+};
+byte arpTransKey;
+byte arpTransposeLoopMode;
 byte arpRandSeed;
 byte arpRebuild;          // whether the sequence needs to be rebuilt
+
+void arpTransposeLoopClear()
+{
+  for(int i=0;i<ARP_TRANS_LOOP_SZ;++i)
+    arpTransposeLoop[i] = ARP_TRANS_LOOP_NOOP;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // ARP INIT
@@ -1029,7 +1056,10 @@ void arpInit()
   arpForceToScaleMask=ARP_SCALE_CHROMATIC;
   arpChordBaseNote=0;
   arpRandSeed=0;
-
+  arpTransKey = ARP_TRANS_KEY_NONE;
+  arpTransposeLoopMode = ARP_TRANS_LOOP_OFF;  
+  arpTransposeLoopClear();  
+  
   // the pattern starts with all beats on
   for(int i=0;i<16;++i)
     arpPattern[i] = 1;
@@ -1389,11 +1419,16 @@ void arpReadInput(unsigned long milliseconds)
     {
       if(!!(genOptions & GEN_OPTS_MIDI_TRANSPOSE) && MIDI_IS_NOTE_ON(msg) && velocity && note)
       {
+        arpTransKey = ARP_TRANS_KEY_MIDI;
         if(arpChordBaseNote)
           arpTranspose = note - arpChordBaseNote;
         arpRebuild=1;
         editRefresh();
       }
+      else if(arpTransKey == ARP_TRANS_KEY_MIDI)
+      {
+        arpTransKey = ARP_TRANS_KEY_NONE;
+      }      
       break;
     }
 
@@ -1510,6 +1545,23 @@ void arpRun(unsigned long milliseconds)
   // update the chord based on user input
   arpReadInput(milliseconds);
 
+  if(synchPlayAdvance && arpTransposeLoopMode != ARP_TRANS_LOOP_OFF && arpPatternLength)
+  {    
+    int loopIndex = ((1+synchPlayIndex)/4) % (4*(arpTransposeLoopMode&0X0F));
+    if(!!(arpTransposeLoopMode & ARP_TRANS_LOOP_REC) && (arpTransKey != ARP_TRANS_KEY_NONE))
+    {
+        arpTransposeLoop[loopIndex] = arpTranspose;
+    }
+    else if(arpTransposeLoop[loopIndex] != ARP_TRANS_LOOP_NOOP && 
+      arpTransposeLoop[loopIndex] != arpTranspose)
+    {
+        arpTranspose = arpTransposeLoop[loopIndex];
+        arpRebuild=1;
+        editRefresh();
+      
+    }
+  }
+  
   // see if user has changed a setting that would mean the
   // sequence needs to be rebuilt
   if(arpRebuild)
@@ -2221,6 +2273,7 @@ void editTranspose(char keyPress, byte forceRefresh)
   if(keyPress >= 0 && keyPress <= 15)
   {
     arpTranspose = keyPress - 3;
+    arpTransKey = ARP_TRANS_KEY_BUTTON;
     arpRebuild = 1;
     forceRefresh = 1;
   }
@@ -2275,6 +2328,27 @@ void editForceToScale(char keyPress, byte forceRefresh)
     arpRebuild = 1;
     forceRefresh = 1;
   }
+  else    
+  if(keyPress >= 9 && keyPress <= 12)
+  {
+    switch(keyPress)
+    {
+      case 9:
+        arpTransposeLoopMode = ARP_TRANS_LOOP_OFF;
+        arpTransposeLoopClear();
+        break;
+      case 10:              
+        arpTransposeLoopMode = (arpTransposeLoopMode == ARP_TRANS_LOOP_1) ? (ARP_TRANS_LOOP_1|ARP_TRANS_LOOP_REC) : ARP_TRANS_LOOP_1;
+        break;
+      case 11:
+        arpTransposeLoopMode = (arpTransposeLoopMode == ARP_TRANS_LOOP_2) ? (ARP_TRANS_LOOP_2|ARP_TRANS_LOOP_REC) : ARP_TRANS_LOOP_2;
+        break;
+      case 12:
+        arpTransposeLoopMode = (arpTransposeLoopMode == ARP_TRANS_LOOP_4) ? (ARP_TRANS_LOOP_4|ARP_TRANS_LOOP_REC) : ARP_TRANS_LOOP_4;
+        break;
+    }
+    forceRefresh = 1;
+  }
   else
   if(15 == keyPress)
   {    
@@ -2288,6 +2362,8 @@ void editForceToScale(char keyPress, byte forceRefresh)
     uiClearLeds();
     uiSetLeds(0, 8, LED_DIM);
     uiLeds[0] = LED_MEDIUM;
+    uiSetLeds(9, 4, LED_DIM);
+    uiLeds[9] = LED_MEDIUM;
     switch(arpForceToScaleMask)
     {
     case ARP_SCALE_CHROMATIC:  
@@ -2315,7 +2391,21 @@ void editForceToScale(char keyPress, byte forceRefresh)
       uiLeds[7] = LED_BRIGHT; 
       break;
     }    
-
+    switch(arpTransposeLoopMode & 0x0F)
+    {
+    case ARP_TRANS_LOOP_OFF:
+      uiLeds[9] = LED_BRIGHT;
+      break;
+    case ARP_TRANS_LOOP_1:
+      uiLeds[10] = !!(arpTransposeLoopMode & ARP_TRANS_LOOP_REC) ? LED_BLINK:LED_BRIGHT;
+      break;
+    case ARP_TRANS_LOOP_2:
+      uiLeds[11] = !!(arpTransposeLoopMode & ARP_TRANS_LOOP_REC) ? LED_BLINK:LED_BRIGHT;
+      break;
+    case ARP_TRANS_LOOP_4:
+      uiLeds[12] = !!(arpTransposeLoopMode & ARP_TRANS_LOOP_REC) ? LED_BLINK:LED_BRIGHT;
+      break;
+    }
     uiLeds[15] = (genOptions & GEN_OPTS_MIDI_TRANSPOSE)? LED_BRIGHT:LED_DIM;    
   }  
 }
@@ -2336,12 +2426,16 @@ void editRun(unsigned long milliseconds)
     uiDataKey = NO_VALUE;
     editRevertTime = milliseconds + EDIT_REVERT_TIME;
   }
+  else if(uiLastDataKey == NO_VALUE)
+  {
+    if(arpTransKey == ARP_TRANS_KEY_BUTTON)
+      arpTransKey = ARP_TRANS_KEY_NONE;
+  }
 
   // Capture any key pressed on the data entry keypad  
   char menuKeyPress = uiMenuKey;
   if(menuKeyPress != NO_VALUE)
   {
-
     uiMenuKey = NO_VALUE;
     if(menuKeyPress != editMode || EDIT_LONG_HOLD == editPressType)
     {
@@ -2354,7 +2448,7 @@ void editRun(unsigned long milliseconds)
     }
     editRevertTime = milliseconds + EDIT_REVERT_TIME;
   }
-
+  
   // is any menu key currently held?
   if(uiLastMenuKey != NO_VALUE)
   {
