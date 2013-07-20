@@ -31,7 +31,7 @@
 //
 // FORWARD DECLS
 //
-void editRefresh();
+void editRefreshTranspose();
 
 //
 // GENERAL OPTIONS
@@ -701,6 +701,8 @@ volatile byte synchBeat;                       // flag for flashing the SYNCH la
 volatile byte synchSendEvent;                  // synch events to send
 volatile char synchTicksToSend;                // ticks to send
 
+volatile unsigned long synchPlayIndexBase;
+
 // PIN DEFS (From PIC MCU servicing MIDI SYNCH input)
 #define P_SYNCH_TICK     2
 #define P_SYNCH_RESTART  3
@@ -835,7 +837,8 @@ void synchInit()
 
   synchLastStepTime = 0;
   synchStepPeriod = 0;
-
+  synchPlayIndexBase = 0;
+  
   // reset the counters
   synchRestart();
 
@@ -1423,7 +1426,7 @@ void arpReadInput(unsigned long milliseconds)
         if(arpChordBaseNote)
           arpTranspose = note - arpChordBaseNote;
         arpRebuild=1;
-        editRefresh();
+        editRefreshTranspose();
       }
       else if(arpTransKey == ARP_TRANS_KEY_MIDI)
       {
@@ -1542,12 +1545,14 @@ void arpRun(unsigned long milliseconds)
 {  
   int i;
 
+  unsigned long playIndex = synchPlayIndexBase + synchPlayIndex;
+  
   // update the chord based on user input
   arpReadInput(milliseconds);
 
   if(synchPlayAdvance && arpTransposeLoopMode != ARP_TRANS_LOOP_OFF && arpPatternLength)
   {    
-    int loopIndex = ((1+synchPlayIndex)/4) % (4*(arpTransposeLoopMode&0X0F));
+    int loopIndex = ((int)(0.5+(double)playIndex/4.0)) % (4*(arpTransposeLoopMode&0X0F));
     if(!!(arpTransposeLoopMode & ARP_TRANS_LOOP_REC) && (arpTransKey != ARP_TRANS_KEY_NONE))
     {
         arpTransposeLoop[loopIndex] = arpTranspose;
@@ -1557,7 +1562,7 @@ void arpRun(unsigned long milliseconds)
     {
         arpTranspose = arpTransposeLoop[loopIndex];
         arpRebuild=1;
-        editRefresh();
+        editRefreshTranspose();
       
     }
   }
@@ -1582,10 +1587,10 @@ void arpRun(unsigned long milliseconds)
   if(synchPlayAdvance && arpSequenceLength && arpPatternLength)
   {                 
     // get the index into the arpeggio sequence
-    int sequenceIndex = synchPlayIndex % arpSequenceLength;
+    int sequenceIndex = playIndex % arpSequenceLength;
 
     // and the index into the pattern
-    arpPatternIndex = synchPlayIndex % arpPatternLength;
+    arpPatternIndex = playIndex % arpPatternLength;
 
     // check there is a note not a rest at this 
     // point in the pattern
@@ -1729,10 +1734,11 @@ void editInit()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// FORCE REFRESH OF DISPLAY
-void editRefresh()
+// FORCE REFRESH OF TRANSPOSE DISPLAY
+void editRefreshTranspose()
 {
-  editForceRefresh = 1;
+  if(editMode == EDIT_MODE_TRANSPOSE)
+    editForceRefresh = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2007,6 +2013,22 @@ void editMidiOptions(char keyPress, byte forceRefresh)
     eepromSet(EEPROM_MIDI_OPTS, midiOptions);    
     forceRefresh = 1;
   }
+  else
+  if(13 == keyPress)
+  {
+    synchPlayIndexBase--;
+  }
+  else
+  if(14 == keyPress)
+  {
+    synchPlayIndexBase++;
+  }
+  if(15 == keyPress)
+  {
+    synchPlayIndexBase += synchPlayIndex;
+    synchPlayIndex = 0;
+  }
+
   if(forceRefresh)
   {
     uiClearLeds();
@@ -2015,6 +2037,9 @@ void editMidiOptions(char keyPress, byte forceRefresh)
     uiLeds[2] = !!(midiOptions&MIDI_OPTS_PASS_INPUT_CHMSG)? LED_BRIGHT : LED_DIM;
     uiLeds[3] = !!(midiOptions&MIDI_OPTS_SYNCH_INPUT)? LED_BRIGHT : LED_DIM;
     uiLeds[4] = !!(midiOptions&MIDI_OPTS_SYNCH_AUX)? LED_BRIGHT : LED_DIM;
+    uiLeds[13] = LED_MEDIUM;
+    uiLeds[14] = LED_MEDIUM;
+    uiLeds[15] = LED_MEDIUM;
   }    
 }
 
