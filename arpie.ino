@@ -1,11 +1,5 @@
 // Owen edits and TODOs:
-// how to configure number of pages without adding buttons?
-//   (maybe that MAJ7 thingy where not all the buttons are used -- insert mode)
 // some of the pattern generation won't make sense for 4 pages
-// don't clear page if size is shrunk (hm it's just a pattern length thing...)
-// if doubling size, double the pattern?  Or do we always fill in 4 pages
-// add transpose progressions -- blues and otherwise -- memorize transpose per
-// page is probably easiest.
 
 
 ////////////////////////////////////////////////////////////////////////////////
