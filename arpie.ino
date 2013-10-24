@@ -1,3 +1,13 @@
+// Owen edits and TODOs:
+// how to configure number of pages without adding buttons?
+//   (maybe that MAJ7 thingy where not all the buttons are used -- insert mode)
+// some of the pattern generation won't make sense for 4 pages
+// don't clear page if size is shrunk (hm it's just a pattern length thing...)
+// if doubling size, double the pattern?  Or do we always fill in 4 pages
+// add transpose progressions -- blues and otherwise -- memorize transpose per
+// page is probably easiest.
+
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 //    ------------------------------------------
@@ -909,7 +919,7 @@ void synchRun(unsigned long milliseconds)
 #define ARP_MAKE_NOTE(note, vel) ((((unsigned int)vel)<<8)|(note))
 #define ARP_GET_NOTE(x) ((x)&0x7f)
 #define ARP_GET_VELOCITY(x) (((x)>>8)&0x7f)
-#define ARP_MAX_SEQUENCE 60
+#define ARP_MAX_SEQUENCE 64
 #define ARP_NOTE_HELD 0x8000
 
 // Values for arpType
@@ -940,7 +950,7 @@ byte arpInsertMode;        // additional note insertion mode
 byte arpVelocityMode;      // (0 = original, 1 = override)
 byte arpVelocity;          // velocity
 byte arpGateLength;        // gate length (0 = tie notes)
-char arpTranspose;         // up/down transpose
+char arpTranspose[4];      // up/down transpose (per page)
 
 // CHORD INFO - notes held by user
 unsigned int arpChord[ARP_MAX_CHORD];
@@ -953,7 +963,7 @@ int arpSequenceLength;     // number of notes in the sequence
 
 // NOTE PATTERN - the rythmic pattern of played/muted notes
 byte arpPattern[ARP_MAX_SEQUENCE];
-byte arpPatternLength;   // user-defined pattern length (1-16)
+byte arpPatternLength;   // user-defined pattern length (1-ARP_MAX_SEQUENCE)
 byte arpPatternIndex;    // position in the pattern (for display)
 
 byte arpRefresh;  // whether the pattern index is changed
@@ -982,18 +992,21 @@ void arpInit()
   arpVelocityMode = 1;
   arpChordLength = 0;
   arpNotesHeld = 0;
-  arpPatternLength = 16;
+  arpPatternLength = 16;  // By default, just a one page pattern.
   arpRefresh = 0;
   arpRebuild = 0;
   arpStopNote = 0;
   arpGateLength = 10;
   arpSequenceLength = 0;
   arpLastPlayAdvance = 0;
-  arpTranspose = 0;
+  for (int i = 0; i < 4; ++i) {
+    arpTranspose[i] = 0;
+  }
 
   // the pattern starts with all beats on
-  for(int i=0;i<16;++i)
+  for(int i = 0; i < ARP_MAX_SEQUENCE; ++i) {
     arpPattern[i] = 1;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1092,6 +1105,7 @@ void arpBuildSequence()
         tempSequenceLength < ARP_MAX_SEQUENCE)
   {
     // this loop is for the octave span
+    int page = tempSequenceLength / 16;
     int octaveCount;
     for(octaveCount = 0;
       octaveCount < arpOctaveSpan && tempSequenceLength < ARP_MAX_SEQUENCE;
@@ -1111,7 +1125,7 @@ void arpBuildSequence()
         case ARP_TYPE_MANUAL:
           chordIndex = 0;
           lastChordIndex = arpChordLength - 1;
-          transpose = arpTranspose + 12 * (arpOctaveShift + octaveCount);
+          transpose = arpTranspose[page] + 12 * (arpOctaveShift + octaveCount);
           chordIndexDelta = 1;
           nextPass = 0;
           break;
@@ -1119,7 +1133,7 @@ void arpBuildSequence()
         case ARP_TYPE_DOWN:
           chordIndex = arpChordLength - 1;;
           lastChordIndex = 0;
-          transpose = arpTranspose + 12 * (arpOctaveShift + arpOctaveSpan - octaveCount - 1);
+          transpose = arpTranspose[page] + 12 * (arpOctaveShift + arpOctaveSpan - octaveCount - 1);
           chordIndexDelta = -1;
           nextPass = 0;
           break;
@@ -1131,7 +1145,7 @@ void arpBuildSequence()
             chordIndex = 0;
             lastChordIndex = arpChordLength - 1;
             chordIndexDelta = 1;
-            transpose = arpTranspose + 12 * (arpOctaveShift + octaveCount);
+            transpose = arpTranspose[page] + 12 * (arpOctaveShift + octaveCount);
             if(octaveCount == arpOctaveSpan - 1)
               nextPass = 2;
           }
@@ -1170,7 +1184,7 @@ void arpBuildSequence()
               chordIndex = arpChordLength - 1;
               lastChordIndex = 0;
             }
-            transpose = arpTranspose + 12 * (arpOctaveShift + arpOctaveSpan - octaveCount - 1);
+            transpose = arpTranspose[page] + 12 * (arpOctaveShift + arpOctaveSpan - octaveCount - 1);
             chordIndexDelta = -1;
           }
           break;
@@ -1536,21 +1550,31 @@ void editInit()
 // EDIT PATTERN
 void editPattern(char keyPress, byte forceRefresh)
 {
+  int page = arpPatternIndex / 16;
   if(keyPress != NO_VALUE)
   {
-    arpPattern[keyPress] = !arpPattern[keyPress];
+    arpPattern[page * 16 + keyPress] = !arpPattern[keyPress];
     forceRefresh = 1;
   }
 
   if(forceRefresh || arpRefresh)
   {
+
     // copy the leds
     for(int i=0; i<16; ++i)
-      uiLeds[i] = arpPattern[i] ? LED_MEDIUM : LED_OFF;
+      uiLeds[i] = arpPattern[page * 16 + i] ? LED_MEDIUM : LED_OFF;
 
     // only display the play position if we have a sequence
-    if(arpSequenceLength)
-      uiLeds[arpPatternIndex] = LED_BRIGHT;
+    if(arpSequenceLength) {
+      // Highlight the current page either by lighting it,
+      // or if it's the same as the current index, turning it off.
+      if (page == arpPatternIndex) {
+        uiLeds[arpPatternIndex] = LED_OFF;
+      } else {
+        uiLeds[arpPatternIndex] = LED_BRIGHT;
+        uiLeds[page] = LED_BRIGHT;
+      }
+    }
 
     // reset the flag
     arpRefresh = 0;
@@ -1561,18 +1585,41 @@ void editPattern(char keyPress, byte forceRefresh)
 // EDIT PATTERN LENGTH
 void editPatternLength(char keyPress, byte forceRefresh)
 {
-  int i;
+  int page = arpPatternIndex / 16;
   if(keyPress >= 0 && keyPress <= 15)
   {
-    arpPatternLength = keyPress + 1;
+    arpPatternLength = page * 16 + keyPress + 1;
     forceRefresh = 1;
   }
 
   if(forceRefresh)
   {
     uiClearLeds();
-    uiSetLeds(0, arpPatternLength, LED_DIM);
-    uiLeds[arpPatternLength-1] = LED_BRIGHT;
+    uiSetLeds(0, keyPress - 1, LED_DIM);
+    uiLeds[keyPress] = LED_BRIGHT;
+  }
+}
+
+/////////////////////////////////////////////////////
+// EDIT PAGE COUNT
+void editPageCount(char keyPress, byte forceRefresh)
+{
+  int pages = arpPatternLength / 16;
+  if(keyPress >= 0 && keyPress <= 4)
+  {
+    // Drop any uneven pattern lengths (ie where length % 16 != 0), just
+    // reinitialize to an even number.
+    // Note that we don't reinitialize the on/off setting.
+    arpPatternLength = (keyPress + 1) * 16;
+    pages = keyPress;
+    forceRefresh = 1;
+  }
+
+  if(forceRefresh)
+  {
+    uiClearLeds();
+    uiSetLeds(0, pages - 1, LED_DIM);
+    uiLeds[pages] = LED_BRIGHT;
   }
 }
 
@@ -1590,15 +1637,15 @@ void editArpType(char keyPress, byte forceRefresh)
       break;
     case 13:
       arpPatternLength = 8+random(8);
-      for(i = 0;i<16;++i) arpPattern[i] = random(2);
+      for (i = 0; i < ARP_MAX_SEQUENCE; ++i) arpPattern[i] = random(2);
       break;
     case 14:
-      for(i = 0;i<16;++i) arpPattern[i] = 0;
-      arpPatternLength = 16;
+      for (i = 0; i < ARP_MAX_SEQUENCE; ++i) arpPattern[i] = 0;
+      arpPatternLength = ARP_MAX_SEQUENCE;
       break;
     case 15:
-      for(i = 0;i<16;++i) arpPattern[i] = 1;
-      arpPatternLength = 16;
+      for (i = 0; i < ARP_MAX_SEQUENCE; ++i) arpPattern[i] = 1;
+      arpPatternLength = ARP_MAX_SEQUENCE;
       break;
   }
 
@@ -2046,9 +2093,10 @@ void editTranspose(char keyPress, byte forceRefresh)
 {
   // 0123456789012345
   // DDDOXXXXXXXXXXXX
+  int page = arpPatternIndex / 16;
   if(keyPress >= 0 && keyPress <= 15)
   {
-    arpTranspose = keyPress - 3;
+    arpTranspose[page] = keyPress - 3;
     arpRebuild = 1;
     forceRefresh = 1;
   }
@@ -2058,7 +2106,7 @@ void editTranspose(char keyPress, byte forceRefresh)
     uiClearLeds();
     uiSetLeds(0, 16, LED_DIM);
     uiLeds[3] = LED_MEDIUM;
-    uiLeds[arpTranspose + 3] = LED_BRIGHT;
+    uiLeds[arpTranspose[page] + 3] = LED_BRIGHT;
   }
 }
 
@@ -2138,7 +2186,11 @@ void editRun(unsigned long milliseconds)
   switch(editMode)
   {
   case EDIT_MODE_PATTERN_LENGTH:
-    editPatternLength(dataKeyPress, forceRefresh);
+    if (editPressType == EDIT_LONG_PRESS) {
+      editPageCount(dataKeyPress, forceRefresh);
+    } else {
+      editPatternLength(dataKeyPress, forceRefresh);
+    }
     break;
   case EDIT_MODE_ARP_TYPE:
     editArpType(dataKeyPress, forceRefresh);
